@@ -11,30 +11,35 @@ export const useScrollSmoother = (
   wrapperRef: RefObject<HTMLDivElement | null>,
   { enabled = true } = {}
 ) => {
-    useEffect(() => {
-      if (!enabled || !wrapperRef.current) return;
+  useEffect(() => {
+    if (!enabled || !wrapperRef.current) return;
 
-      if (ScrollTrigger.isTouch) return;
+    // Disable on touch devices
+    if (ScrollTrigger.isTouch) return;
 
-      ScrollSmoother.get()?.kill();
+    // Prevent duplicate smoothers
+    ScrollSmoother.get()?.kill();
 
-      const content = wrapperRef.current.querySelector("#smooth-content");
+    const content =
+      wrapperRef.current.querySelector<HTMLElement>(
+        "#smooth-content"
+      );
 
-      if (!content) return;
+    if (!content) return;
 
-      const smoother = ScrollSmoother.create({
-        wrapper: wrapperRef.current,
-        content,
-        smooth: 1.5,
-        effects: true,
-        normalizeScroll: true,
-        ignoreMobileResize: true,
-      });
+    const smoother = ScrollSmoother.create({
+      wrapper: wrapperRef.current,
+      content,
+      smooth: 1.5,
+      effects: true,
+      normalizeScroll: true,
+      ignoreMobileResize: true,
+    });
 
-      ScrollTrigger.refresh();
+    ScrollTrigger.refresh(true);
 
-      return () => {
-        smoother.kill();
-      };
-  }, [enabled, wrapperRef]);
+    return () => {
+      smoother.kill();
+    };
+  }, [enabled]);
 };
