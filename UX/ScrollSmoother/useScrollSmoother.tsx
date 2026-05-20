@@ -1,5 +1,3 @@
-"use client";
-
 import { useEffect, type RefObject } from "react";
 import { gsap } from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
@@ -13,33 +11,28 @@ export const useScrollSmoother = (
 ) => {
   useEffect(() => {
     if (!enabled || !wrapperRef.current) return;
-
-    // Disable on touch devices
     if (ScrollTrigger.isTouch) return;
 
-    // Prevent duplicate smoothers
-    ScrollSmoother.get()?.kill();
+    const ctx = gsap.context(() => {
+      ScrollSmoother.get()?.kill();
 
-    const content =
-      wrapperRef.current.querySelector<HTMLElement>(
+      const content = wrapperRef.current!.querySelector<HTMLElement>(
         "#smooth-content"
       );
+      if (!content) return;
 
-    if (!content) return;
+      ScrollSmoother.create({
+        wrapper: wrapperRef.current!,
+        content,
+        smooth: 1.5,
+        effects: true,
+        normalizeScroll: true,
+        ignoreMobileResize: true,
+      });
 
-    const smoother = ScrollSmoother.create({
-      wrapper: wrapperRef.current,
-      content,
-      smooth: 1.5,
-      effects: true,
-      normalizeScroll: true,
-      ignoreMobileResize: true,
-    });
+      ScrollTrigger.refresh(true);
+    }, wrapperRef);
 
-    ScrollTrigger.refresh(true);
-
-    return () => {
-      smoother.kill();
-    };
-  }, [enabled]);
+    return () => ctx.revert();
+  }, [enabled, wrapperRef]);
 };
