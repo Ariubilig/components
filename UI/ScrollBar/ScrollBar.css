@@ -1,0 +1,64 @@
+/* Hide native scrollbar */
+html {
+  scrollbar-width: none;
+}
+::-webkit-scrollbar {
+  display: none;
+}
+
+
+/* Wrapper — 100px wide, 50vh tall, fixed centered right */
+.scrollbar {
+  position: fixed;
+  right: 0;
+  top: 25vh;        /* 270px on 1080p */
+  width: 100px;     /* 5.21vw on 1920p: 49px | 2px | 49px */
+  height: 50vh;     /* 540px on 1080p */
+  z-index: 9999;
+  cursor: pointer;
+}
+
+/* 2px track centered at left: 49px */
+.scrollbar__track {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 49px;
+  width: 2px;
+  background-color: var(--dividerBg);
+}
+
+/* Thumb — starts at 2px, expands on hover */
+.scrollbar__thumb {
+  position: absolute;
+  left: 49px;
+  width: 2px;
+  height: 40px;
+  background-color: var(--divider);
+  border-radius: 1px;
+  cursor: grab;
+  top: 0;
+  transition:
+    left 0.12s ease,
+    width 0.12s ease,
+    border-radius 0.12s ease;
+}
+
+.scrollbar__thumb:active {
+  cursor: grabbing;
+}
+
+/* Expand symmetrically around the 2px axis: (10 - 2) / 2 = 4px shift left */
+.scrollbar:hover .scrollbar__thumb {
+  left: 45px;
+  width: 10px;
+  border-radius: 5px;
+}
+
+
+/* Hide scrollbar on touch devices */
+@media (hover: none) and (pointer: coarse) {
+  .scrollbar {
+    display: none;
+  }
+}
