@@ -1,4 +1,4 @@
-import useGMTplus8 from '../../hooks/useGMT+8'
+import useGMTplus8 from '.'
 
   function App(){
 
