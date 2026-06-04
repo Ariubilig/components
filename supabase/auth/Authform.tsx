@@ -6,9 +6,8 @@ type Mode = 'signin' | 'signup' | 'reset'
 /**
  * Minimal email/password auth form. No styling — wire up your own CSS.
  *
- * Uses the centralized auth methods from the provider (no supabase import).
  * On sign-in / confirmed sign-up it does NOT navigate: the provider updates
- * `user`, App re-renders, and /auth swaps to <PostAuthRouter />.
+ * `user`, and your /login route should swap to a redirect (see App.example).
  */
 export default function AuthForm() {
   const { signIn, signUp, resetPassword } = useAuth()
@@ -44,7 +43,6 @@ export default function AuthForm() {
       if (mode === 'signin') {
         const { error } = await signIn(email, password)
         if (error) throw error
-        // Success → onAuthStateChange handles the redirect. Nothing to do here.
       } else if (mode === 'signup') {
         const { error, needsEmailConfirmation } = await signUp(email, password)
         if (error) throw error

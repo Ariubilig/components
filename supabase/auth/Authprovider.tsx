@@ -1,16 +1,17 @@
-/* AuthProvider.tsx — production-ready Supabase auth for a React SPA (react-router v6)
+/* AuthProvider.tsx — production-ready, project-agnostic Supabase auth (react-router v6)
  *
- * Reusable across projects: <AuthProvider>, useAuth(), <RequireAuth>, and the
- * auth methods (signIn / signUp / signOut / resetPassword / updatePassword).
- * App-specific (bottom of file): <PostAuthRouter> — your /plan vs /questions logic.
+ * Exposes: <AuthProvider>, useAuth(), <RequireAuth>, and auth methods
+ * (signIn / signUp / signOut / resetPassword / updatePassword).
  *
  * Design rules:
  *  - Provider tracks auth state (session / user / loading) and exposes auth actions.
  *  - onAuthStateChange callback is SYNCHRONOUS — no await, no supabase.* calls
  *    inside it (the documented deadlock trap).
- *  - No navigation in the provider; routing lives in guards.
- *  - Action methods return Supabase's { error } shape — they never throw — so
- *    callers can branch simply. Per-action loading is the caller's concern.
+ *  - No navigation in the provider; routing lives in guards and your pages.
+ *  - Action methods return Supabase's { error } shape — they never throw.
+ *
+ * There is intentionally NO app-specific routing here (e.g. "send new users to
+ * onboarding"). That belongs in your home route — see README.
  */
 import {
   createContext,
@@ -20,10 +21,9 @@ import {
   type ReactNode,
 } from 'react'
 import { Navigate } from 'react-router-dom'
-import { supabase } from '../../lib/supabase'
+import { supabase } from './supabase'
+import { ROUTES } from './routes'
 import type { AuthError, Session, User } from '@supabase/supabase-js'
-
-/* ============================ REUSABLE CORE ============================ */
 
 type Result = { error: AuthError | null }
 
@@ -78,8 +78,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  /* ---- Auth actions (centralized so components never import supabase) ---- */
-
   const signIn: AuthCtx['signIn'] = async (email, password) => {
     const { error } = await supabase.auth.signInWithPassword({ email, password })
     return { error }
@@ -96,15 +94,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // No navigate() — SIGNED_OUT fires, the guard redirects.
   }
 
-  // Step 1 of reset: emails a recovery link that lands on /update-password.
+  // Step 1 of reset: emails a recovery link that lands on the update-password route.
   const resetPassword: AuthCtx['resetPassword'] = async (email) => {
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/update-password`,
+      redirectTo: `${window.location.origin}${ROUTES.updatePassword}`,
     })
     return { error }
   }
 
-  // Step 2 of reset: call from /update-password after the user arrives via the link.
+  // Step 2 of reset: call from the update-password screen after the user arrives.
   const updatePassword: AuthCtx['updatePassword'] = async (newPassword) => {
     const { error } = await supabase.auth.updateUser({ password: newPassword })
     return { error }
@@ -128,10 +126,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   )
 }
 
-/** Gate protected routes. Reusable: pass your own redirect path / loader. */
+/** Gate protected routes. Pass your own redirect path / loading fallback. */
 export function RequireAuth({
   children,
-  redirectTo = '/auth',
+  redirectTo = ROUTES.login,
   fallback,
 }: {
   children: ReactNode
@@ -146,38 +144,4 @@ export function RequireAuth({
 
 function DefaultSpinner() {
   return <div style={{ display: 'grid', placeItems: 'center', height: '100vh' }}>Loading…</div>
-}
-
-/* ========================== APP-SPECIFIC ==========================
- * Not reusable — queries `user_profiles` and decides /plan vs /questions.
- * For cross-project reuse, lift this into its own file; everything above
- * drops into any app unchanged.
- */
-export function PostAuthRouter() {
-  const { user, loading } = useAuth()
-  const [target, setTarget] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (loading || !user) return
-    let cancelled = false
-
-    supabase
-      .from('user_profiles')
-      .select('user_id')
-      .eq('user_id', user.id)
-      .maybeSingle()
-      .then(({ data, error }) => {
-        if (cancelled) return
-        setTarget(data && !error ? '/plan' : '/questions')
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [loading, user])
-
-  if (loading) return <DefaultSpinner />
-  if (!user) return <Navigate to="/auth" replace />
-  if (!target) return <DefaultSpinner />
-  return <Navigate to={target} replace />
 }
