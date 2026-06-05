@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { useAuth } from './AuthProvider'
+import { PASSWORD_POLICY, validatePassword } from './authConfig'
 
 type Mode = 'signin' | 'signup' | 'reset'
 
@@ -7,7 +8,10 @@ type Mode = 'signin' | 'signup' | 'reset'
  * Minimal email/password auth form. No styling — wire up your own CSS.
  *
  * On sign-in / confirmed sign-up it does NOT navigate: the provider updates
- * `user`, and your /login route should swap to a redirect (see App.example).
+ * `user`, and your login route (ROUTES.login) is responsible for swapping to a
+ * redirect once authenticated. Without that redirect layer, a successful
+ * sign-in looks like "nothing happened" — see README ("AuthForm does not
+ * navigate on success").
  */
 export default function AuthForm() {
   const { signIn, signUp, resetPassword } = useAuth()
@@ -36,6 +40,16 @@ export default function AuthForm() {
     if (mode !== 'reset' && !password) {
       setError('Password is required.')
       return
+    }
+    if (mode === 'signup') {
+      // Validate against the policy on sign-UP only. Existing users may have a
+      // password that predates a policy change — sign-in just submits and lets
+      // Supabase return a WeakPasswordError if it no longer qualifies.
+      const pwError = validatePassword(password)
+      if (pwError) {
+        setError(pwError)
+        return
+      }
     }
 
     setLoading(true)
@@ -93,14 +107,14 @@ export default function AuthForm() {
             onChange={(e) => setPassword(e.target.value)}
             autoComplete={mode === 'signin' ? 'current-password' : 'new-password'}
             required
-            minLength={6}
+            minLength={PASSWORD_POLICY.minLength}
             disabled={loading}
           />
         </label>
       )}
 
       {error && <p role="alert">{error}</p>}
-      {info && <p>{info}</p>}
+      {info && <p role="status">{info}</p>}
 
       <button type="submit" disabled={loading}>
         {loading ? 'Please wait…' : submitLabel}

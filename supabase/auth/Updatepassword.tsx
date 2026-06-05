@@ -1,14 +1,16 @@
 import { useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from './AuthProvider'
+import { ROUTES } from './routes'
+import { PASSWORD_POLICY, validatePassword } from './authConfig'
 
 /**
  * The screen the user lands on from the password-reset email link.
  *
  * Supabase auto-detects the recovery token in the URL and establishes a
  * session (PASSWORD_RECOVERY), so `user` is truthy when this renders.
- * Wire it as a PLAIN route — NOT behind RequireAuth/PostAuthRouter — or the
- * recovery session will get bounced away before the password is updated.
+ * Wire it as a PLAIN route — NOT behind RequireAuth or a post-auth redirect —
+ * or the recovery session will get bounced away before the password is updated.
  *
  * No styling — wire up your own CSS.
  */
@@ -27,7 +29,7 @@ export default function UpdatePassword() {
       <div>
         <h1>Reset password</h1>
         <p>This reset link is invalid or has expired.</p>
-        <button type="button" onClick={() => navigate('/auth', { replace: true })}>
+        <button type="button" onClick={() => navigate(ROUTES.login, { replace: true })}>
           Back to sign in
         </button>
       </div>
@@ -38,8 +40,9 @@ export default function UpdatePassword() {
     e.preventDefault()
     setError(null)
 
-    if (password.length < 6) {
-      setError('Password must be at least 6 characters.')
+    const pwError = validatePassword(password)
+    if (pwError) {
+      setError(pwError)
       return
     }
     if (password !== confirm) {
@@ -52,7 +55,7 @@ export default function UpdatePassword() {
       const { error } = await updatePassword(password)
       if (error) throw error
       // Success: the user now holds a valid session → drop them into the app.
-      navigate('/', { replace: true })
+      navigate(ROUTES.root, { replace: true })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong.')
       setSubmitting(false)
@@ -71,7 +74,7 @@ export default function UpdatePassword() {
           onChange={(e) => setPassword(e.target.value)}
           autoComplete="new-password"
           required
-          minLength={6}
+          minLength={PASSWORD_POLICY.minLength}
           disabled={submitting}
         />
       </label>
@@ -84,7 +87,7 @@ export default function UpdatePassword() {
           onChange={(e) => setConfirm(e.target.value)}
           autoComplete="new-password"
           required
-          minLength={6}
+          minLength={PASSWORD_POLICY.minLength}
           disabled={submitting}
         />
       </label>
