@@ -1,6 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
 
-/* Vite env vars. For CRA use process.env.REACT_APP_*, for Next use NEXT_PUBLIC_*. */
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string
 
@@ -10,7 +9,9 @@ if (!supabaseUrl || !supabaseAnonKey) {
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey)
 
-//
+
+//////////////////////////////////////////////////
+
 
 import { createClient } from '@supabase/supabase-js'
 
