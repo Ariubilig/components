@@ -1,64 +1,122 @@
-/* Hide native scrollbar */
+/*
+ * Hide the native page scrollbar.
+ *
+ * Scoped to `html` on purpose: a bare `::-webkit-scrollbar` selector also
+ * strips the scrollbars from every nested overflow container on the page —
+ * modals, sidebars, code blocks — just by importing this component.
+ */
 html {
   scrollbar-width: none;
 }
-::-webkit-scrollbar {
+html::-webkit-scrollbar {
   display: none;
 }
 
-
-/* Wrapper — 100px wide, 50vh tall, fixed centered right */
 .scrollbar {
+  /* Override these from the `className` prop's wrapper class. */
+  --sb-hit: 20px;              /* width of the interactive column */
+  --sb-inset: 14px;            /* viewport edge -> bar axis */
+  --sb-height: 50vh;
+  --sb-thickness: 2px;         /* resting hairline width */
+  --sb-thickness-hover: 10px;  /* thumb width while hovered/dragged */
+  --sb-radius: 999px;
+  --sb-track-color: rgb(0 0 0 / 0.1);
+  --sb-thumb-color: rgb(0 0 0 / 0.4);
+  --sb-thumb-color-active: rgb(0 0 0 / 0.65);
+  --sb-ease: 0.12s ease;
+  --sb-z: 50;
+
   position: fixed;
-  right: 0;
-  top: 25vh;        /* 270px on 1080p */
-  width: 100px;     /* 5.21vw on 1920p: 49px | 2px | 49px */
-  height: 50vh;     /* 540px on 1080p */
-  z-index: 9999;
+  top: 50%;
+  translate: 0 -50%;
+  width: var(--sb-hit);
+  height: var(--sb-height);
+  z-index: var(--sb-z);
+  opacity: 0;
+  transition: opacity var(--sb-ease);
+
+  /* Never swallow clicks meant for the page. Track and thumb opt back in
+     below, and only while the bar is actually shown. */
+  pointer-events: none;
+}
+
+/* The inset is measured to the bar's axis, so the hit column straddles it. */
+.scrollbar--right { right: calc(var(--sb-inset) - var(--sb-hit) / 2); }
+.scrollbar--left  { left:  calc(var(--sb-inset) - var(--sb-hit) / 2); }
+
+.scrollbar.is-active { opacity: 1; }
+.scrollbar.is-active .scrollbar__track,
+.scrollbar.is-active .scrollbar__thumb { pointer-events: auto; }
+
+/*
+ * Track and thumb fill the hit column and are themselves transparent; the
+ * visible hairline is drawn by ::after. That keeps the grab target a
+ * comfortable --sb-hit wide while the bar still looks 2px thin, and means
+ * the hover expansion animates `width` on a pseudo-element instead of
+ * nudging `left` on the positioned box.
+ */
+.scrollbar__track,
+.scrollbar__thumb {
+  position: absolute;
+  left: 0;
+  width: 100%;
+}
+
+.scrollbar__track {
+  top: 0;
+  bottom: 0;
   cursor: pointer;
 }
 
-/* 2px track centered at left: 49px */
-.scrollbar__track {
+.scrollbar__thumb {
+  top: 0;
+  height: 20px; /* placeholder; measured in JS. Matches MIN_THUMB. */
+  cursor: grab;
+}
+
+.scrollbar.is-dragging .scrollbar__thumb { cursor: grabbing; }
+
+.scrollbar__track::after,
+.scrollbar__thumb::after {
+  content: "";
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 49px;
-  width: 2px;
-  background-color: var(--dividerBg);
-}
-
-/* Thumb — starts at 2px, expands on hover */
-.scrollbar__thumb {
-  position: absolute;
-  left: 49px;
-  width: 2px;
-  height: 40px;
-  background-color: var(--divider);
-  border-radius: 1px;
-  cursor: grab;
-  top: 0;
+  left: 50%;
+  translate: -50% 0;
+  width: var(--sb-thickness);
+  border-radius: var(--sb-radius);
   transition:
-    left 0.12s ease,
-    width 0.12s ease,
-    border-radius 0.12s ease;
+    width var(--sb-ease),
+    background-color var(--sb-ease);
 }
 
-.scrollbar__thumb:active {
-  cursor: grabbing;
+.scrollbar__track::after { background-color: var(--sb-track-color); }
+.scrollbar__thumb::after { background-color: var(--sb-thumb-color); }
+
+.scrollbar:hover .scrollbar__thumb::after,
+.scrollbar.is-dragging .scrollbar__thumb::after {
+  width: var(--sb-thickness-hover);
+  background-color: var(--sb-thumb-color-active);
 }
 
-/* Expand symmetrically around the 2px axis: (10 - 2) / 2 = 4px shift left */
-.scrollbar:hover .scrollbar__thumb {
-  left: 45px;
-  width: 10px;
-  border-radius: 5px;
-}
-
-
-/* Hide scrollbar on touch devices */
-@media (hover: none) and (pointer: coarse) {
+@media (prefers-color-scheme: dark) {
   .scrollbar {
-    display: none;
+    --sb-track-color: rgba(0, 0, 0, 0.12);
+    --sb-thumb-color: rgba(0, 0, 0, 0.45);
+    --sb-thumb-color-active: rgba(0, 0, 0, 0.75);
   }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scrollbar,
+  .scrollbar__track::after,
+  .scrollbar__thumb::after {
+    transition: none;
+  }
+}
+
+/* Touch devices get the native overlay scrollbar instead. */
+@media (hover: none) and (pointer: coarse) {
+  .scrollbar { display: none; }
 }

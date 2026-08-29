@@ -1,168 +1,206 @@
 import "./ScrollBar.css";
 import { useEffect, useRef } from "react";
-import { gsap } from "gsap";
-import { ScrollSmoother } from "gsap/ScrollSmoother";
 
 /**
- * Custom vertical scrollbar that mirrors the page scroll position.
+ * Custom vertical page scrollbar that mirrors the scroll position.
  *
- * Works with or without GSAP ScrollSmoother:
- *  - if a ScrollSmoother instance exists, it reads/writes the smoothed scroll;
- *  - otherwise it falls back to the native window scroll.
+ * Dependency-free: the scroll source is injected as a {@link Scroller}, so the
+ * component itself knows nothing about GSAP, Lenis, or any other smooth-scroll
+ * library. See `smootherScroller.ts` for the opt-in ScrollSmoother adapter.
  *
- * Performance: expensive layout reads (scrollHeight/clientHeight) happen only
- * on resize via {@link measure}. The per-frame {@link tick} just reads the
- * cheap scrollTop and writes a GPU-composited `transform`, and only when the
- * thumb actually moved.
+ * Performance: no React state, so it never re-renders. Layout reads happen only
+ * on mount / resize in {@link measure}; the per-frame work is one cheap scroll
+ * read plus a composited `transform`, skipped when the thumb hasn't moved. The
+ * rAF loop parks itself once the position settles, so an idle page costs nothing.
  *
- * Usage: render once near the app root, e.g. `<ScrollBar />`.
+ * Styling: every dimension and colour is a `--sb-*` custom property — override
+ * them from a wrapper class passed via `className`.
  */
 
-/** Cached layout values + last rendered state. Avoids re-querying the DOM each frame. */
-interface ScrollMetrics {
-  /** Max scrollable distance in px (scrollHeight - viewport height). */
-  max: number;
-  /** Travel range of the thumb inside the track in px (trackHeight - thumbHeight). */
-  range: number;
-  /** Current thumb height in px. */
-  thumbH: number;
-  /** Last `translateY` applied to the thumb in px; `-1` forces the first write. */
-  top: number;
-  /** Whether the page is scrollable (and the scrollbar is shown). */
-  visible: boolean;
+/** Adapter over whatever actually scrolls the page. */
+export interface Scroller {
+  /** Current scroll offset in px. */
+  get(): number;
+  /** Scroll to an absolute offset in px. */
+  set(top: number, smooth: boolean): void;
+  /** Element whose `scrollHeight` defines the scrollable content. */
+  content(): HTMLElement;
 }
 
-/** Pointer-drag state for the thumb. */
-interface DragState {
-  /** True while the thumb is being dragged. */
-  active: boolean;
-  /** Pointer Y at drag start, in px. */
-  startY: number;
-  /** Thumb `top` at drag start, in px. */
-  startTop: number;
-}
-
-/** Current ScrollSmoother instance, or `undefined` if smoothing isn't active. */
-const getSmoother = (): ScrollSmoother | undefined => ScrollSmoother.get();
-
-/** Current scroll offset in px, from the smoother if present, else the window. */
-const getScrollY = (): number => getSmoother()?.scrollTop() ?? window.scrollY;
-
-/**
- * Scroll the page to a fractional position.
- * @param pct Target position 0..1 (clamped); 0 = top, 1 = bottom.
- * @param max Max scrollable distance in px.
- */
-const scrollTo = (pct: number, max: number): void => {
-  const top = Math.max(0, Math.min(1, pct)) * max;
-  getSmoother()?.scrollTo(top, true) ?? window.scrollTo({ top, behavior: "smooth" });
+/** Default adapter: the native window scroll. */
+export const windowScroller: Scroller = {
+  get: () => window.scrollY,
+  set: (top, smooth) => window.scrollTo({ top, behavior: smooth ? "smooth" : "auto" }),
+  content: () => document.documentElement,
 };
 
-export default function ScrollBar() {
+export interface ScrollBarProps {
+  /** Where the scroll position is read from and written to. @default windowScroller */
+  scroller?: Scroller;
+  /** Viewport edge to pin the bar to. @default "right" */
+  side?: "left" | "right";
+  /** Extra class on the root — the hook for overriding the `--sb-*` properties. */
+  className?: string;
+}
+
+/** Frames of no movement before the rAF loop parks itself. */
+const IDLE_FRAMES = 20;
+/** Thumb height floor in px. Keep in sync with `.scrollbar__thumb { height }`. */
+const MIN_THUMB = 20;
+
+const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
+
+export default function ScrollBar({ scroller = windowScroller, side = "right", className }: ScrollBarProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
   const thumbRef = useRef<HTMLDivElement>(null);
 
-  const m = useRef<ScrollMetrics>({ max: 0, range: 0, thumbH: 20, top: -1, visible: false });
-  const drag = useRef<DragState>({ active: false, startY: 0, startTop: 0 });
+  // Held in a ref so a caller passing an inline object doesn't tear down the
+  // listeners on every render.
+  const scrollerRef = useRef(scroller);
+  useEffect(() => { scrollerRef.current = scroller; }, [scroller]);
 
   useEffect(() => {
     const root = rootRef.current!;
     const track = trackRef.current!;
     const thumb = thumbRef.current!;
 
-    // Recompute cached metrics + thumb height. Triggers layout reads, so only
-    // call on mount / resize / content-size change — never per frame.
+    /** Cached layout + last rendered state, so no frame has to read the DOM. */
+    const m = { max: 0, range: 0, thumbH: MIN_THUMB, top: -1, visible: false };
+    const drag = { active: false, startY: 0, startTop: 0 };
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    let rafId = 0;
+    let idle = 0;
+
+    // Recompute cached metrics + thumb height. Triggers layout reads, so this
+    // runs on mount / resize / content-size change only — never per frame.
     function measure(): void {
-      const content = getSmoother()?.content() as HTMLElement | undefined;
-      const scrollH = content?.scrollHeight ?? document.documentElement.scrollHeight;
-      const max = scrollH - window.innerHeight;
+      const scrollH = scrollerRef.current.content().scrollHeight;
+      const view = window.innerHeight;
       const trackH = track.clientHeight;
-      // Thumb height is proportional to the visible fraction, with a 20px floor.
-      const thumbH = Math.max(20, (window.innerHeight / (max + window.innerHeight)) * trackH);
-      const visible = max > 0;
+      // Thumb height is proportional to the visible fraction, with a floor.
+      const thumbH = Math.max(MIN_THUMB, (view / Math.max(scrollH, 1)) * trackH);
 
-      m.current.max = max;
-      m.current.range = trackH - thumbH;
-      m.current.thumbH = thumbH;
-      thumb.style.height = `${thumbH}px`;
+      m.max = scrollH - view;
+      m.range = trackH - thumbH;
+      m.thumbH = thumbH;
 
-      // Toggle visibility only on change to avoid redundant style writes.
-      if (visible !== m.current.visible) {
-        m.current.visible = visible;
-        root.style.opacity = visible ? "1" : "0";
-        root.style.pointerEvents = visible ? "auto" : "none";
+      const height = `${thumbH}px`;
+      if (thumb.style.height !== height) thumb.style.height = height;
+
+      // Hide when there's nothing to scroll, or no room for the thumb to travel.
+      const visible = m.max > 0 && m.range > 0;
+      if (visible !== m.visible) {
+        m.visible = visible;
+        m.top = -1; // force the next tick to write
+        root.classList.toggle("is-active", visible);
       }
     }
 
-    // Per-frame: map scroll position to thumb offset. Cheap read, composited
-    // write, and skipped entirely when the thumb hasn't moved.
-    function tick(): void {
-      if (!m.current.visible) return;
-      const top = (getScrollY() / m.current.max) * m.current.range;
-      if (top !== m.current.top) {
-        m.current.top = top;
-        thumb.style.transform = `translateY(${top}px)`;
-      }
+    // Map scroll position onto thumb offset. Returns whether anything moved, so
+    // the loop knows when it can stop.
+    function tick(): boolean {
+      if (!m.visible) return false;
+      const top = clamp(scrollerRef.current.get() / m.max, 0, 1) * m.range;
+      if (top === m.top) return false;
+      m.top = top;
+      thumb.style.transform = `translateY(${top}px)`;
+      return true;
     }
+
+    function frame(): void {
+      rafId = 0;
+      idle = tick() || drag.active ? 0 : idle + 1;
+      if (idle <= IDLE_FRAMES) rafId = requestAnimationFrame(frame);
+    }
+
+    /** Restart the loop (or extend it) because something is about to move. */
+    function wake(): void {
+      idle = 0;
+      if (!rafId) rafId = requestAnimationFrame(frame);
+    }
+
+    function scrollToPct(pct: number, smooth: boolean): void {
+      scrollerRef.current.set(clamp(pct, 0, 1) * m.max, smooth && !reduceMotion.matches);
+    }
+
+    // Pointer capture keeps the drag alive off the thumb without document-level
+    // listeners, and covers pen/hybrid input, not just mouse.
+    function onThumbDown(e: PointerEvent): void {
+      if (e.button !== 0) return;
+      e.preventDefault(); // don't start a text selection
+      thumb.setPointerCapture(e.pointerId);
+      drag.active = true;
+      drag.startY = e.clientY;
+      drag.startTop = m.top;
+      root.classList.add("is-dragging");
+      wake();
+    }
+
+    function onThumbMove(e: PointerEvent): void {
+      if (!drag.active) return;
+      // Instant, never smoothed: smoothing a drag leaves the thumb lagging the cursor.
+      scrollToPct((drag.startTop + e.clientY - drag.startY) / m.range, false);
+    }
+
+    function onThumbUp(e: PointerEvent): void {
+      if (!drag.active) return;
+      drag.active = false;
+      if (thumb.hasPointerCapture(e.pointerId)) thumb.releasePointerCapture(e.pointerId);
+      root.classList.remove("is-dragging");
+    }
+
+    // Press the track: jump so the thumb centers on the press. The thumb is a
+    // sibling painted on top, so it swallows its own presses and a finished
+    // drag can never fall through to here.
+    function onTrackDown(e: PointerEvent): void {
+      if (e.button !== 0) return;
+      const top = e.clientY - track.getBoundingClientRect().top - m.thumbH / 2;
+      scrollToPct(top / m.range, true);
+      wake();
+    }
+
+    function onResize(): void { measure(); wake(); }
 
     measure();
     tick();
-    gsap.ticker.add(tick);
 
-    // Re-measure when the track or scrollable content changes size (e.g. async
-    // content loading on a news page changing the page height).
-    const ro = new ResizeObserver(() => { measure(); tick(); });
+    const ro = new ResizeObserver(onResize);
     ro.observe(track);
-    const content = getSmoother()?.content() as HTMLElement | undefined;
-    ro.observe(content ?? document.documentElement);
-    window.addEventListener("resize", measure);
+    ro.observe(document.documentElement);
+
+    thumb.addEventListener("pointerdown", onThumbDown);
+    thumb.addEventListener("pointermove", onThumbMove);
+    thumb.addEventListener("pointerup", onThumbUp);
+    thumb.addEventListener("pointercancel", onThumbUp);
+    track.addEventListener("pointerdown", onTrackDown);
+    window.addEventListener("scroll", wake, { passive: true });
+    window.addEventListener("resize", onResize);
 
     return () => {
-      gsap.ticker.remove(tick);
+      cancelAnimationFrame(rafId);
       ro.disconnect();
-      window.removeEventListener("resize", measure);
+      thumb.removeEventListener("pointerdown", onThumbDown);
+      thumb.removeEventListener("pointermove", onThumbMove);
+      thumb.removeEventListener("pointerup", onThumbUp);
+      thumb.removeEventListener("pointercancel", onThumbUp);
+      track.removeEventListener("pointerdown", onTrackDown);
+      window.removeEventListener("scroll", wake);
+      window.removeEventListener("resize", onResize);
     };
   }, []);
-
-  // Drag-to-scroll: listeners live on document so the drag continues even when
-  // the pointer leaves the thin thumb.
-  useEffect(() => {
-    const onMove = (e: MouseEvent): void => {
-      if (!drag.current.active) return;
-      const pct = (drag.current.startTop + e.clientY - drag.current.startY) / m.current.range;
-      scrollTo(pct, m.current.max);
-    };
-    const onUp = (): void => { drag.current.active = false; };
-
-    document.addEventListener("mousemove", onMove);
-    document.addEventListener("mouseup", onUp);
-    return () => {
-      document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup", onUp);
-    };
-  }, []);
-
-  // Start a drag and capture the thumb's current position as the anchor.
-  function onThumbMouseDown(e: React.MouseEvent): void {
-    e.preventDefault();
-    e.stopPropagation(); // don't let the track's onClick also fire
-    drag.current = { active: true, startY: e.clientY, startTop: m.current.top };
-  }
-
-  // Click on the track (not the thumb): jump so the thumb centers on the click.
-  function onTrackClick(e: React.MouseEvent<HTMLDivElement>): void {
-    if (e.target === thumbRef.current || !trackRef.current) return;
-    const top = e.clientY - trackRef.current.getBoundingClientRect().top - m.current.thumbH / 2;
-    scrollTo(top / m.current.range, m.current.max);
-  }
 
   return (
-    <div ref={rootRef} className="scrollbar" onClick={onTrackClick}
-      role="scrollbar" aria-orientation="vertical" aria-valuemin={0} aria-valuemax={100}
+    // aria-hidden: native scrolling and keyboard paging still work, so this is
+    // purely decorative. A `role="scrollbar"` would promise focus and arrow-key
+    // handling it doesn't implement.
+    <div
+      ref={rootRef}
+      className={`scrollbar scrollbar--${side}${className ? ` ${className}` : ""}`}
+      aria-hidden="true"
     >
       <div ref={trackRef} className="scrollbar__track" />
-      <div ref={thumbRef} className="scrollbar__thumb" onMouseDown={onThumbMouseDown} />
+      <div ref={thumbRef} className="scrollbar__thumb" />
     </div>
   );
 }
