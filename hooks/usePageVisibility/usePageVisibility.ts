@@ -36,7 +36,7 @@ export type AwayTitleOptions = {
  */
 export function useAwayTitle({
   home,
-  label = 'On hold',
+  label = '',
   interval = 500,
   dots = 3,
 }: AwayTitleOptions = {}) {
